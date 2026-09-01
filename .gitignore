@@ -1,0 +1,25 @@
+# Generated data (regenerable via simulate.py)
+data/
+
+# Fine-tuning artifacts (regenerable, and large)
+finetune/training_data.jsonl
+
+# Trained models (regenerable, and .gguf/.joblib files can exceed GitHub's 100MB limit)
+agents/models/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Secrets
+.env
+*.key
+
+# OS
+.DS_Store
+Thumbs.db
