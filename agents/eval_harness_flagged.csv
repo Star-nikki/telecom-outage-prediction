@@ -1,0 +1,87 @@
+tower_id,skipped,root_cause_category,grounding_score,grounding_justification,consistency_score,consistency_justification,completeness_score,completeness_justification,clarity_score,clarity_justification,report_text
+T0001,False,congestion_collapse,3,RuleBasedJudge cannot verify grounding -- use a real LLM judge for this dimension.,1,Found both an acute-onset phrase and a contradictory gradual/other-category phrase in the same report -- likely the mismatched-SOP pattern found earlier.,3,RuleBasedJudge cannot verify completeness -- use a real LLM judge for this dimension.,3,RuleBasedJudge cannot verify clarity -- use a real LLM judge for this dimension.,"EXECUTIVE SUMMARY
+Tower T0001 shows a 99.9% probability of outage
+within 3h, confidence 99.9%. Root cause
+assessed as congestion_collapse.
+
+ROOT CAUSE
+Category selected on combined-signal score 10.0: packet_loss was near baseline 6h ago (0.1) vs current 29.5 -- sudden onset within the last 6h, not a gradual buildup; latency was near baseline 6h ago (12.3) vs current 138.8 -- sudden onset within the last 6h, not a gradual buildup; packet_loss=29.5%; latency=139ms.
+
+HISTORICAL PATTERN AT THIS TOWER
+T0001 has 24 recorded prior failure event(s) total. 6 prior congestion_collapse event(s) recorded at T0001, average lead time 6.3h before outage_start. Most recent recorded event: weather_induced_degradation (outage_start=2026-12-10 01:15:00). Across all recorded events at this tower: average lead time 24.2h, average outage duration 2.7h.
+
+TIMELINE
+Snapshot analyzed at 2026-01-03 14:15:00. See failure_events.csv for exact historical windows.
+
+EVIDENCE
+- tower_health: Battery 100%, grid voltage 231V, RSRP -76 dBm. Power and signal normal.
+- traffic: Utilization 25%, packet loss 29.5%, throughput 13 Mbps, latency 139 ms. Elevated packet loss WITHOUT high utilization -- not simple congestion; check radio quality / interference / hardware before assuming capacity issue. 24h utilization trend: -0.7 pts.
+- weather: Storm=clear, rainfall 0.0mm, wind 7km/h.
+- user_behavior: Load multiplier 0.35. Normal demand pattern.
+
+CONFIDENCE (all horizons)
+- 15m: 1.5% probability, 97.4% confidence
+- 30m: 3.0% probability, 96.3% confidence
+- 1h: 0.0% probability, 99.9% confidence
+- 3h: 99.9% probability, 99.9% confidence
+- 6h: 100.0% probability, 100.0% confidence
+- 12h: 100.0% probability, 100.0% confidence
+- 24h: 99.9% probability, 99.9% confidence
+
+KNOWLEDGE BASE REFERENCES
+- [SOP-CONG-01] Congestion SOP: utilization sustained above 80% with rising packet loss and latency indicates capacity exhaustion. Recommended action: activate traffic load-balancing to neighboring towers if available, and flag the site for capacity upgrade evaluation if congestion recurs more than twice in 30 days.
+- [SOP-GEN-01] General incident response guideline: always cross-reference the mobility events log before attributing a traffic spike to a fault -- named events (festivals, matches, concerts) can produce load patterns that superficially resemble congestion collapse but require no maintenance action.
+
+RECOMMENDED ACTIONS
+1. Activate traffic load-balancing to neighboring towers if available.
+2. Flag the site for capacity upgrade evaluation if congestion recurs more than twice in 30 days.
+3. Cross-reference the mobility events log before attributing a traffic spike to a fault.
+
+ESTIMATED CUSTOMER IMPACT
+Low (14 connected users at time of snapshot).
+
+SUGGESTED MAINTENANCE PRIORITY
+High"
+T0047,False,congestion_collapse,3,RuleBasedJudge cannot verify grounding -- use a real LLM judge for this dimension.,1,Found both an acute-onset phrase and a contradictory gradual/other-category phrase in the same report -- likely the mismatched-SOP pattern found earlier.,3,RuleBasedJudge cannot verify completeness -- use a real LLM judge for this dimension.,3,RuleBasedJudge cannot verify clarity -- use a real LLM judge for this dimension.,"EXECUTIVE SUMMARY
+Tower T0047 shows a 99.9% probability of outage
+within 3h, confidence 99.8%. Root cause
+assessed as congestion_collapse.
+
+ROOT CAUSE
+Category selected on combined-signal score 12.0: packet_loss was near baseline 6h ago (0.3) vs current 31.0 -- sudden onset within the last 6h, not a gradual buildup; latency was near baseline 6h ago (14.2) vs current 140.9 -- sudden onset within the last 6h, not a gradual buildup; packet_loss=31.0%; packet loss is severe; latency=141ms.
+
+HISTORICAL PATTERN AT THIS TOWER
+T0047 has 24 recorded prior failure event(s) total. 5 prior congestion_collapse event(s) recorded at T0047, average lead time 6.2h before outage_start. Most recent recorded event: congestion_collapse (outage_start=2026-12-31 14:15:00). Across all recorded events at this tower: average lead time 16.2h, average outage duration 3.1h.
+
+TIMELINE
+Snapshot analyzed at 2025-05-21 00:30:00. See failure_events.csv for exact historical windows.
+
+EVIDENCE
+- tower_health: Battery 100%, grid voltage 232V, RSRP -76 dBm. Power and signal normal.
+- traffic: Utilization 39%, packet loss 31.0%, throughput 114 Mbps, latency 141 ms. Elevated packet loss WITHOUT high utilization -- not simple congestion; check radio quality / interference / hardware before assuming capacity issue. 24h utilization trend: +22.8 pts.
+- weather: Storm=clear, rainfall 0.0mm, wind 10km/h.
+- user_behavior: Load multiplier 0.38. Normal demand pattern.
+
+CONFIDENCE (all horizons)
+- 15m: 1.5% probability, 97.5% confidence
+- 30m: 2.2% probability, 96.5% confidence
+- 1h: 0.2% probability, 99.6% confidence
+- 3h: 99.9% probability, 99.8% confidence
+- 6h: 100.0% probability, 100.0% confidence
+- 12h: 100.0% probability, 100.0% confidence
+- 24h: 99.9% probability, 99.9% confidence
+
+KNOWLEDGE BASE REFERENCES
+- [SOP-CONG-01] Congestion SOP: utilization sustained above 80% with rising packet loss and latency indicates capacity exhaustion. Recommended action: activate traffic load-balancing to neighboring towers if available, and flag the site for capacity upgrade evaluation if congestion recurs more than twice in 30 days.
+- [SOP-GEN-01] General incident response guideline: always cross-reference the mobility events log before attributing a traffic spike to a fault -- named events (festivals, matches, concerts) can produce load patterns that superficially resemble congestion collapse but require no maintenance action.
+
+RECOMMENDED ACTIONS
+1. Activate traffic load-balancing to neighboring towers if available.
+2. Flag the site for capacity upgrade evaluation if congestion recurs more than twice in 30 days.
+3. Cross-reference the mobility events log before attributing a traffic spike to a fault.
+
+ESTIMATED CUSTOMER IMPACT
+Low (40 connected users at time of snapshot).
+
+SUGGESTED MAINTENANCE PRIORITY
+High"

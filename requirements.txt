@@ -1,0 +1,28 @@
+# Generated from the actual imports across decision_agent.py, orchestrator_v3.py,
+# orchestrator_llm.py, advanced_rag.py, knowledge_base.py, calibration_diagnostics.py,
+# calibration_experiment.py, confidence_diagnostics.py, leaf_support_diagnostics.py,
+# dashboard.py, query_agent.py, eval_harness.py, llm_providers.py.
+#
+# Versions are left unpinned deliberately (matches how the project has been
+# installed so far via --break-system-packages without pinning) -- pin these
+# if you want fully reproducible builds later.
+
+pandas
+numpy
+scikit-learn
+lightgbm
+xgboost
+joblib
+langgraph
+rank_bm25
+streamlit
+pyarrow          # parquet read/write (telecom_timeseries.parquet)
+openpyxl         # xlsx read/write, needed if eval_harness/test-suite tooling touches Excel
+requests         # llm_providers.py's OllamaProvider
+
+# Optional, only needed if you actually use these specific providers --
+# install on demand rather than by default, since most of the project runs
+# fine with --provider rule_based or ollama:
+# anthropic        # llm_providers.py AnthropicProvider
+# openai           # llm_providers.py OpenAIProvider
+# llama-cpp-python # llm_providers.py Phi4LocalProvider

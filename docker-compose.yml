@@ -1,0 +1,47 @@
+# docker-compose.yml -- wires up the volumes/ports for you so you don't have
+# to remember the long `docker run` flags from the Dockerfile comments.
+#
+# RUN THE DASHBOARD:
+#     docker compose up dashboard
+#     then open http://localhost:8501
+#
+# RUN A ONE-OFF CLI ANALYSIS:
+#     docker compose run --rm cli python -m agents.orchestrator_v3 --tower T0000
+#     docker compose run --rm cli python -m agents.orchestrator_llm --tower T0000 --provider ollama
+#
+# RUN THE QUERY AGENT INTERACTIVELY:
+#     docker compose run --rm cli python agents/query_agent.py
+#
+# If you use --provider ollama, uncomment the `ollama` service below and set
+# OLLAMA_HOST=http://ollama:11434 so the container reaches it (rather than
+# localhost, which inside a container means the container itself, not your
+# host machine).
+
+services:
+  dashboard:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./agents/models:/app/agents/models
+    command: ["streamlit", "run", "agents/dashboard.py", "--server.address=0.0.0.0"]
+
+  cli:
+    build: .
+    volumes:
+      - ./data:/app/data
+      - ./agents/models:/app/agents/models
+    stdin_open: true
+    tty: true
+
+  # Uncomment to run Ollama alongside this project instead of on the host:
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_models:/root/.ollama
+
+# volumes:
+#   ollama_models:

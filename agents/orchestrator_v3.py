@@ -1,8 +1,7 @@
 """
-Orchestrator v3 -- exact match to your latest recommended architecture:
-Monitoring -> Decision -> threshold branch -> Root Cause -> Knowledge (RAG)
--> Recommendation (LLM) -> Report. No parallel branch (see orchestrator_v2.py
-for the version that also runs a Historical Events Agent alongside Knowledge).
+Orchestrator v3 -- Agentic RAG architecture: Monitoring -> Decision ->
+threshold branch -> Root Cause -> {Knowledge Agent, Historical Events
+Agent} running in PARALLEL -> Recommendation (LLM) -> Report.
 
 ARCHITECTURE
 ------------
@@ -17,8 +16,15 @@ ARCHITECTURE
      |                 |
    Finish        Root Cause Agent
                        |
-                       v
-              Knowledge Agent (RAG)
+              +--------+--------+
+              |                 |
+              v                 v
+      Knowledge Agent    Historical Events
+      (hybrid RAG over    Agent (this tower's
+      SOP corpus, via     own recorded incidents,
+      advanced_rag.py)    via failure_events.csv)
+              |                 |
+              +--------+--------+
                        |
                        v
              Recommendation Agent (LLM)
@@ -29,25 +35,32 @@ ARCHITECTURE
 Each node has a genuinely distinct responsibility and the graph only
 proceeds past Decision if the threshold condition is met -- this isn't
 "function A calls function B calls function C." The Root Cause Agent makes
-a real categorization judgment, the Knowledge Agent performs real retrieval
-(TF-IDF similarity search over a small local SOP corpus, in knowledge_base.py),
-and the Recommendation Agent is LLM-prompted with that retrieved context,
-not hardcoded if/else logic.
+a real categorization judgment. The Knowledge and Historical Events agents
+are two INDEPENDENT retrieval agents over two DIFFERENT sources (general
+SOP knowledge vs. this specific tower's own incident history) running as
+true parallel LangGraph branches, not one calling the other -- this is what
+makes the RAG layer "agentic" rather than a single retrieval call. The
+Recommendation Agent is LLM-prompted with both retrieved contexts, not
+hardcoded if/else logic.
 
 WHERE TO SAVE THIS FILE:
     <your project folder>\\telecom_sim_v2\\agents\\orchestrator_v3.py
-    (alongside decision_agent.py, llm_providers.py, knowledge_base.py --
-    imports all three. orchestrator_v2.py can stay too, or be deleted --
-    v3 doesn't depend on it.)
+    (alongside decision_agent.py, llm_providers.py, advanced_rag.py --
+    imports all three. knowledge_base.py is no longer imported by this file
+    but can stay on disk for reference/comparison.)
 
 USAGE (run from the agents/ folder, after decision_agent.py --mode train
 has produced trained models in agents/models/):
 
-    pip install langgraph scikit-learn --break-system-packages
+    pip install langgraph scikit-learn rank_bm25 --break-system-packages
 
     python orchestrator_v3.py --tower T0000
     python orchestrator_v3.py --tower T0000 --provider anthropic
     python orchestrator_v3.py --tower T0000 --threshold 0.6 --primary-horizon 3h
+
+CANONICAL VERSIONS IN USE (per project decision): orchestrator_v3.py (this
+file, rule-based/deterministic engine) and orchestrator_llm.py (LLM-layered
+version built on top of it). No cleanup/deprecation pass needed here.
 """
 
 import argparse
@@ -67,7 +80,27 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from config import PREDICTION_HORIZONS  # noqa: E402
 from llm_providers import get_provider  # noqa: E402
 import decision_agent as da  # noqa: E402
-import knowledge_base as kb  # noqa: E402
+import advanced_rag as arag  # noqa: E402  -- upgraded from knowledge_base.py's plain
+                                            # TF-IDF retrieval to hybrid BM25+TF-IDF,
+                                            # contextual queries, parent-child chunking,
+                                            # and reranking. Interface-compatible: still
+                                            # returns a list of {id, failure_type, text,
+                                            # relevance_score} dicts, so nothing downstream
+                                            # (recommendation_agent, report_agent) changes.
+from meta_confidence_prediction import predict_with_meta_confidence  # noqa: E402
+                                            # -- Priority 5: wraps predict_with_confidence_calibrated()
+                                            # (still runs underneath) and ADDITIONALLY returns an
+                                            # alert-only meta-confidence score for horizons where
+                                            # meta_confidence_diagnostics.py found it genuinely beats
+                                            # existing confidence on alerts specifically (currently 3h
+                                            # only). Returns None for meta_confidence anywhere that
+                                            # wasn't validated -- see that file's docstring.
+                                            # -- Priority 4: opt-in probability calibration.
+                                            # Reads models/calibration_recommendation.json
+                                            # (produced by calibration_experiment.py) and
+                                            # applies Platt/Isotonic ONLY where it was found
+                                            # to genuinely help; falls back to raw, unchanged
+                                            # behavior if that file doesn't exist yet.
 
 from pathlib import Path
 
@@ -160,10 +193,13 @@ class AgentState(TypedDict):
     predictions: dict               # horizon -> {probability, confidence}
     primary_probability: float
     primary_confidence: float
+    primary_calibration_method: Optional[str]
+    primary_meta_confidence: Optional[float]
     threshold: float
     root_cause_category: Optional[str]
     root_cause_reasoning: Optional[str]
     knowledge_context: Optional[List[dict]]
+    historical_context: Optional[dict]
     recommendation: Optional[str]
     final_report: Optional[str]
     provider_name: str
@@ -238,22 +274,60 @@ def monitoring_agent(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 # Decision Agent -- loads trained models, produces multi-horizon predictions
 # ---------------------------------------------------------------------------
+def _enforce_monotonic_across_horizons(predictions: dict, horizon_order: list) -> dict:
+    """
+    outage_in_next_15m is a SUBSET of outage_in_next_3h, which is a subset
+    of outage_in_next_24h -- if an outage happens within 15 minutes, it
+    necessarily also happened within 3 hours. So P(15m) <= P(30m) <= ... <=
+    P(24h) is a genuine logical constraint on the underlying events, not
+    just a preference. Each horizon's model (and each horizon's Platt/
+    Isotonic calibrator, from Priority 4) is fit completely independently,
+    so nothing enforces that agreement between horizons -- this pass fixes
+    it post-hoc via a simple running-maximum in horizon order (the standard
+    pool-adjacent-violators-style fix for enforcing monotonicity on an
+    already-computed sequence). Confidence is untouched -- this only
+    touches probability, and only adjusts a horizon's value UP to match a
+    smaller horizon it violated, never down.
+    """
+    running_max = 0.0
+    for label in horizon_order:
+        if label not in predictions:
+            continue
+        original = predictions[label]["probability"]
+        adjusted = max(original, running_max)
+        predictions[label]["probability"] = adjusted
+        predictions[label]["monotonic_adjusted"] = (adjusted != original)
+        if adjusted != original:
+            predictions[label]["probability_before_monotonic_fix"] = original
+        running_max = adjusted
+    return predictions
+
+
 def decision_agent_node(state: AgentState) -> dict:
     row = pd.Series(state["row"])
     predictions = {}
+    horizon_order = [label for label, _ in PREDICTION_HORIZONS]
     for label, _ in PREDICTION_HORIZONS:
         model_path = os.path.join(MODEL_DIR, f"decision_model_{state['backend']}_{label}.joblib")
         if not os.path.exists(model_path):
             continue
         models = joblib.load(model_path)
-        prob, conf = da.predict_with_confidence(models, row, label, state['backend'])
-        predictions[label] = {"probability": prob, "confidence": conf}
+        prob, conf, method, meta_conf = predict_with_meta_confidence(
+            models, row, state["backend"], label, model_dir=MODEL_DIR)
+        predictions[label] = {"probability": prob, "confidence": conf, "calibration_method": method,
+                               "meta_confidence": meta_conf}
 
-    primary = predictions.get(state["primary_horizon"], {"probability": 0.0, "confidence": 0.0})
+    predictions = _enforce_monotonic_across_horizons(predictions, horizon_order)
+
+    primary = predictions.get(state["primary_horizon"],
+                               {"probability": 0.0, "confidence": 0.0, "calibration_method": "raw",
+                                "meta_confidence": None})
     return {
         "predictions": predictions,
         "primary_probability": primary["probability"],
         "primary_confidence": primary["confidence"],
+        "primary_calibration_method": primary["calibration_method"],
+        "primary_meta_confidence": primary.get("meta_confidence"),
     }
 
 
@@ -535,12 +609,87 @@ def _parse_root_cause(text: str) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# Knowledge / RAG Agent (parallel branch 1)
+# Knowledge / RAG Agent (parallel branch 1) -- upgraded to advanced_rag.py:
+# hybrid BM25+TF-IDF retrieval, a contextual query built from live telemetry
+# (not just the category name), parent-child chunking, and a reranking pass.
 # ---------------------------------------------------------------------------
 def knowledge_agent(state: AgentState) -> dict:
-    query = f"{state['root_cause_category']} {state['root_cause_reasoning']}"
-    results = kb.retrieve(query, top_k=2, failure_type=state["root_cause_category"])
+    query = arag.build_contextual_query(
+        state["root_cause_category"], state["root_cause_reasoning"], row=state["row"],
+    )
+    results = arag.retrieve(query, top_k=2, failure_type=state["root_cause_category"])
     return {"knowledge_context": results}
+
+
+# ---------------------------------------------------------------------------
+# Historical Events Agent (parallel branch 2 -- this is what makes the RAG
+# layer "agentic": two independent retrieval agents run off Root Cause in
+# parallel, over two genuinely different sources, and both feed forward.
+# Knowledge Agent retrieves generic SOP text; this agent retrieves THIS
+# TOWER's own recorded incident history from failure_events.csv (real data,
+# already produced by the simulator -- same file pick_demo_row() and
+# list_events_for_tower() already read from) and summarizes whether the
+# currently-predicted root cause category has precedent here, how often,
+# and what the typical lead time / duration looked like historically.
+# ---------------------------------------------------------------------------
+_events_cache = None
+
+
+def _load_events_df():
+    global _events_cache
+    if _events_cache is None:
+        if os.path.exists(EVENTS_PATH):
+            _events_cache = pd.read_csv(
+                EVENTS_PATH, parse_dates=["ramp_start", "outage_start", "outage_end"])
+        else:
+            _events_cache = pd.DataFrame(
+                columns=["tower_id", "failure_type", "ramp_start", "outage_start", "outage_end"])
+    return _events_cache
+
+
+def historical_events_agent(state: AgentState) -> dict:
+    events = _load_events_df()
+    tower_id = state["tower_id"]
+    category = state["root_cause_category"]
+    tower_events = events[events["tower_id"] == tower_id]
+
+    if len(tower_events) == 0:
+        return {"historical_context": {
+            "tower_event_count": 0,
+            "category_event_count": 0,
+            "has_category_precedent": False,
+            "summary": f"No recorded prior failure events for {tower_id} in failure_events.csv -- "
+                       f"this would be the first recorded incident at this tower.",
+        }}
+
+    same_category = tower_events[tower_events["failure_type"] == category]
+    lead_times = (tower_events["outage_start"] - tower_events["ramp_start"]).dt.total_seconds() / 3600
+    durations = (tower_events["outage_end"] - tower_events["outage_start"]).dt.total_seconds() / 3600
+    most_recent = tower_events.sort_values("outage_start").iloc[-1]
+
+    if len(same_category):
+        cat_lead_times = (same_category["outage_start"] - same_category["ramp_start"]).dt.total_seconds() / 3600
+        precedent = (f"{len(same_category)} prior {category} event(s) recorded at {tower_id}, "
+                     f"average lead time {cat_lead_times.mean():.1f}h before outage_start.")
+    else:
+        other_types = ", ".join(sorted(tower_events["failure_type"].unique()))
+        precedent = (f"No prior {category} events recorded at {tower_id} specifically -- "
+                     f"{len(tower_events)} prior event(s) of other type(s) exist ({other_types}).")
+
+    summary = (
+        f"{tower_id} has {len(tower_events)} recorded prior failure event(s) total. {precedent} "
+        f"Most recent recorded event: {most_recent['failure_type']} "
+        f"(outage_start={most_recent['outage_start']}). "
+        f"Across all recorded events at this tower: average lead time {lead_times.mean():.1f}h, "
+        f"average outage duration {durations.mean():.1f}h."
+    )
+
+    return {"historical_context": {
+        "tower_event_count": int(len(tower_events)),
+        "category_event_count": int(len(same_category)),
+        "has_category_precedent": bool(len(same_category) > 0),
+        "summary": summary,
+    }}
 
 
 def compute_priority(probability: float, connected_users: int) -> tuple:
@@ -585,6 +734,8 @@ def compute_priority(probability: float, connected_users: int) -> tuple:
 def recommendation_agent(state: AgentState) -> dict:
     row = state["row"]
     knowledge_text = "\n".join(f"- [{d['id']}] {d['text']}" for d in (state["knowledge_context"] or []))
+    historical_text = (state.get("historical_context") or {}).get(
+        "summary", "No historical event data available.")
 
     context = f"""You are a telecom network operations engineer.
 
@@ -598,6 +749,9 @@ Root cause: {state['root_cause_category']} -- {state['root_cause_reasoning']}
 
 Relevant maintenance knowledge:
 {knowledge_text}
+
+Historical pattern at this tower:
+{historical_text}
 
 Generate specific, actionable recommendations for the operations team. Be concrete
 about urgency and timing, and reference the knowledge context where relevant."""
@@ -620,6 +774,9 @@ def _rule_based_recommendation(state: AgentState) -> str:
     ]
     if top_doc:
         lines.append(f"Per {top_doc['id']}: {top_doc['text']}")
+    hist = state.get("historical_context") or {}
+    if hist.get("summary"):
+        lines.append(f"Historical pattern: {hist['summary']}")
     lines.append("(Rule-based summary -- for richer, context-synthesized recommendations, "
                   "run with --provider anthropic/openai/ollama.)")
     return "\n".join(lines)
@@ -631,20 +788,37 @@ def _rule_based_recommendation(state: AgentState) -> str:
 def report_agent(state: AgentState) -> dict:
     row = state["row"]
     pred_lines = "\n".join(
-        f"- {h}: {p['probability']*100:.1f}% probability, {p['confidence']*100:.1f}% confidence"
+        f"- {h}: {p['probability']*100:.1f}% probability, {p['confidence']*100:.1f}% confidence "
+        f"[{p.get('calibration_method', 'raw')}]"
+        + (f", meta-confidence {p['meta_confidence']*100:.1f}% (alert-specific)" if p.get("meta_confidence") is not None else "")
+        + (f" (raised from {p['probability_before_monotonic_fix']*100:.1f}% to stay "
+           f"consistent with a shorter horizon)" if p.get("monotonic_adjusted") else "")
         for h, p in state["predictions"].items()
     )
     knowledge_lines = "\n".join(f"- [{d['id']}] {d['text']}" for d in (state["knowledge_context"] or []))
+    historical_text = (state.get("historical_context") or {}).get(
+        "summary", "No historical event data available.")
     connected_users = row.get("connected_users", 0)
     priority, impact = compute_priority(state["primary_probability"], connected_users)
+    calib_method = state.get("primary_calibration_method", "raw")
+    calib_note = ("(Platt-calibrated)" if calib_method == "platt" else
+                  "(Isotonic-calibrated)" if calib_method == "isotonic" else
+                  "(uncalibrated -- run calibration_experiment.py to check if calibration helps here)")
+    meta_conf = state.get("primary_meta_confidence")
+    meta_conf_line = (f"\nAlert-specific meta-confidence: {meta_conf*100:.1f}% (validated on alerts at "
+                       f"this horizon specifically -- see meta_confidence_diagnostics.py)."
+                       if meta_conf is not None else "")
 
     report = f"""EXECUTIVE SUMMARY
 Tower {state['tower_id']} shows a {state['primary_probability']*100:.1f}% probability of outage
-within {state['primary_horizon']}, confidence {state['primary_confidence']*100:.1f}%. Root cause
-assessed as {state['root_cause_category']}.
+within {state['primary_horizon']} {calib_note}, confidence {state['primary_confidence']*100:.1f}%.{meta_conf_line}
+Root cause assessed as {state['root_cause_category']}.
 
 ROOT CAUSE
 {state['root_cause_reasoning']}
+
+HISTORICAL PATTERN AT THIS TOWER
+{historical_text}
 
 TIMELINE
 Snapshot analyzed at {row.get('timestamp')}. See failure_events.csv for exact historical windows.
@@ -652,7 +826,7 @@ Snapshot analyzed at {row.get('timestamp')}. See failure_events.csv for exact hi
 EVIDENCE
 {chr(10).join(f'- {k}: {v}' for k, v in state['evidence'].items())}
 
-CONFIDENCE (all horizons)
+CONFIDENCE (all horizons) -- [calibration method applied to probability]
 {pred_lines}
 
 KNOWLEDGE BASE REFERENCES
@@ -694,6 +868,7 @@ def build_graph():
     graph.add_node("decision", decision_agent_node)
     graph.add_node("root_cause", root_cause_agent)
     graph.add_node("knowledge", knowledge_agent)
+    graph.add_node("historical_events", historical_events_agent)
     graph.add_node("recommendation", recommendation_agent)
     graph.add_node("report", report_agent)
     graph.add_node("finish", finish_agent)
@@ -706,8 +881,15 @@ def build_graph():
         {"root_cause": "root_cause", "finish": "finish"},
     )
 
+    # Agentic RAG: Knowledge Agent (SOP corpus, advanced_rag.py) and
+    # Historical Events Agent (this tower's own incident history,
+    # failure_events.csv) both fan out from Root Cause and run in parallel,
+    # then fan back in to Recommendation -- two independent retrieval
+    # agents over two different sources, not one agent calling the other.
     graph.add_edge("root_cause", "knowledge")
+    graph.add_edge("root_cause", "historical_events")
     graph.add_edge("knowledge", "recommendation")
+    graph.add_edge("historical_events", "recommendation")
     graph.add_edge("recommendation", "report")
     graph.add_edge("report", END)
     graph.add_edge("finish", END)

@@ -1,0 +1,21 @@
+# Same spirit as .gitignore: keep data and trained models OUT of the image.
+# They're mounted at runtime instead (see docker-compose.yml), so the image
+# stays small and isn't tied to one dataset/training run.
+data/
+agents/models/
+finetune/training_data.jsonl
+finetune/*.gguf
+
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+*.csv
+!agents/models/.gitkeep
+
+# Editor/OS cruft
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

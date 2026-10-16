@@ -1,0 +1,11 @@
+case_type,expected_category,tower_id,result,predicted_category,probability,confidence,primary_horizon_used,effective_hours_before,sop_prefix_match,consistency_score,consistency_note,notes
+failure,hardware_power_failure,T0023,PASS,hardware_power_failure,1.0,0.9997015959664329,6h,4.0,True,5.0,No known contradiction pattern detected (keyword check only).,
+failure,hardware_power_failure,T0014,PASS,hardware_power_failure,1.0,0.9997045876745219,6h,4.0,True,5.0,No known contradiction pattern detected (keyword check only).,
+failure,congestion_collapse,T0047,PASS,congestion_collapse,0.8918109930044243,0.9998849004903445,3h,2.0,True,1.0,Found both an acute-onset phrase and a contradictory gradual/other-category phrase in the same report -- likely the mismatched-SOP pattern found earlier.,
+failure,congestion_collapse,T0039,PASS,congestion_collapse,0.8427104171342322,0.9996917777964311,3h,2.0,True,5.0,No known contradiction pattern detected (keyword check only).,
+failure,weather_induced_degradation,T0012,PASS,weather_induced_degradation,0.7557281552129091,0.9997535366905378,3h,3.0,True,1.0,Found both an acute-onset phrase and a contradictory gradual/other-category phrase in the same report -- likely the mismatched-SOP pattern found earlier.,
+failure,weather_induced_degradation,T0048,FAIL - not triggered,,0.2213924735079717,0.9812171022374777,3h,3.0,,,,
+failure,capacity_creep,T0037,FAIL - not triggered,,0.25609756097560976,0.9757351896830646,24h,20.0,,,,
+failure,capacity_creep,T0010,PASS,capacity_creep,0.7785714285714286,0.9980278922679484,24h,20.0,True,5.0,No known contradiction pattern detected (keyword check only).,
+negative,,T0000,PASS,,7.3245885191639505e-06,0.9999931065936828,,,,5.0,No known contradiction pattern detected (keyword check only).,snapshot at 2024-01-01 00:00:00
+ambiguous,,T0029,REPORTED - no pass/fail (see notes),,7.3245885191639505e-06,0.999993052787995,,,,5.0,No known contradiction pattern detected (keyword check only).,snapshot at 2026-09-02 20:45:00: high utilization + normal packet_loss/latency. Correctly did not force a diagnosis. Review manually -- ambiguity handling isn't a pass/fail fact.

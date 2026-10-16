@@ -35,15 +35,20 @@ import sys
 import pandas as pd
 from langgraph.graph import StateGraph, END
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # agents/ itself, for
+                                                                  # sibling imports below
 from config import PREDICTION_HORIZONS  # noqa: E402
 import decision_agent as da  # noqa: E402
 
 from orchestrator_v3 import (  # noqa: E402
     AgentState, monitoring_agent, decision_agent_node, route_after_decision,
-    knowledge_agent, report_agent, finish_agent, compute_priority,
+    knowledge_agent, historical_events_agent, report_agent, finish_agent, compute_priority,
     pick_demo_row, list_events_for_tower, _rule_based_root_cause,
-    FAILURE_CATEGORIES,
+    FAILURE_CATEGORIES, DATA_PATH,
 )
 from llm_providers import get_provider  # noqa: E402
 
@@ -683,6 +688,8 @@ def recommendation_agent_llm(state: AgentState) -> dict:
     row = state["row"]
     tower_id = state["tower_id"]
     knowledge_text = "\n".join(f"- [{d['id']}] {d['text']}" for d in (state["knowledge_context"] or []))
+    historical_text = (state.get("historical_context") or {}).get(
+        "summary", "No historical event data available.")
 
     prompt = f"""You are a telecom network operations engineer.
 
@@ -690,6 +697,10 @@ Root cause: {state['root_cause_category']} -- {state['root_cause_reasoning']}
 
 Relevant maintenance knowledge:
 {knowledge_text}
+
+Historical pattern at this tower (background context only -- do not cite this as an SOP
+and do not turn it into a numbered action item):
+{historical_text}
 
 Generate 2-4 concise, actionable recommendations for the operations team.
 Return ONLY a numbered list, nothing else.
@@ -755,6 +766,7 @@ def build_graph():
     graph.add_node("decision", decision_agent_node)
     graph.add_node("root_cause", root_cause_agent_llm)
     graph.add_node("knowledge", knowledge_agent)
+    graph.add_node("historical_events", historical_events_agent)
     graph.add_node("recommendation", recommendation_agent_llm)
     graph.add_node("report", report_agent)
     graph.add_node("finish", finish_agent)
@@ -767,8 +779,13 @@ def build_graph():
         {"root_cause": "root_cause", "finish": "finish"},
     )
 
+    # Agentic RAG, same parallel fan-out/fan-in as orchestrator_v3.py:
+    # Knowledge Agent and Historical Events Agent both run off Root Cause,
+    # in parallel, then feed into Recommendation.
     graph.add_edge("root_cause", "knowledge")
+    graph.add_edge("root_cause", "historical_events")
     graph.add_edge("knowledge", "recommendation")
+    graph.add_edge("historical_events", "recommendation")
     graph.add_edge("recommendation", "report")
     graph.add_edge("report", END)
     graph.add_edge("finish", END)
@@ -800,8 +817,8 @@ def main():
         list_events_for_tower(args.tower)
         return
 
-    print("Loading data/telecom_timeseries.parquet ...")
-    df = pd.read_parquet("data/telecom_timeseries.parquet")
+    print(f"Loading {DATA_PATH} ...")
+    df = pd.read_parquet(DATA_PATH)
     tower_id = args.tower or df["tower_id"].iloc[0]
 
     tdf = df[df["tower_id"] == tower_id].sort_values("timestamp")
